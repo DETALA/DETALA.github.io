@@ -32,8 +32,9 @@ Memory Mapping Segment，向下扩展的内存是由mmap分配的，其中包含
 </li>
 </ul>
 <h2 id="mmap-x2F-munmmap"><a href="#mmap-x2F-munmmap" class="headerlink" title="mmap&#x2F;munmmap"></a>mmap&#x2F;munmmap</h2><p>看一下函数原型</p>
-<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="type">void</span> *<span class="title function_">mmap</span><span class="params">(<span class="type">void</span> *addr, <span class="type">size_t</span> length, <span class="type">int</span> prot, <span class="type">int</span> flags, <span class="type">int</span> fd, <span class="type">off_t</span> offset)</span>;</span><br><span class="line"><span class="type">int</span> <span class="title function_">munmap</span><span class="params">(<span class="type">void</span> *addr, <span class="type">size_t</span> length)</span>;</span><br></pre></td></tr></table></figure>
-
+<pre><code class="c">void *mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset);
+int munmap(void *addr, size_t length);
+</code></pre>
 <ul>
 <li><p><code>mmap()</code>用于在进程的虚拟地址空间中创建一个新的映射，并将文件或设备映射到这块内存中</p>
 <ul>
@@ -233,8 +234,14 @@ Memory Mapping Segment，向下扩展的内存是由mmap分配的，其中包含
 </ol>
 </li>
 </ul>
-<h3 id="large-bin大小分析"><a href="#large-bin大小分析" class="headerlink" title="large bin大小分析"></a>large bin大小分析</h3><figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line"><span class="meta">#<span class="keyword">define</span> largebin_index_64(sz)                                                \</span></span><br><span class="line"><span class="meta">  (((((unsigned long) (sz)) &gt;&gt; 6) <span class="string">&lt;= 48) ?  48 + (((unsigned long) (sz)) &gt;</span>&gt; 6) :\</span></span><br><span class="line"><span class="meta">   ((((unsigned long) (sz)) &gt;&gt; 9) <span class="string">&lt;= 20) ?  91 + (((unsigned long) (sz)) &gt;</span>&gt; 9) :\</span></span><br><span class="line"><span class="meta">   ((((unsigned long) (sz)) &gt;&gt; 12) <span class="string">&lt;= 10) ? 110 + (((unsigned long) (sz)) &gt;</span>&gt; 12) :\</span></span><br><span class="line"><span class="meta">   ((((unsigned long) (sz)) &gt;&gt; 15) <span class="string">&lt;= 4) ? 119 + (((unsigned long) (sz)) &gt;</span>&gt; 15) :\</span></span><br><span class="line"><span class="meta">   ((((unsigned long) (sz)) &gt;&gt; 18) <span class="string">&lt;= 2) ? 124 + (((unsigned long) (sz)) &gt;</span>&gt; 18) :\</span></span><br><span class="line"><span class="meta">   126)</span></span><br></pre></td></tr></table></figure>
-
+<h3 id="large-bin大小分析"><a href="#large-bin大小分析" class="headerlink" title="large bin大小分析"></a>large bin大小分析</h3><pre><code class="c">#define largebin_index_64(sz)                                                \
+  (((((unsigned long) (sz)) &gt;&gt; 6) &lt;= 48) ?  48 + (((unsigned long) (sz)) &gt;&gt; 6) :\
+   ((((unsigned long) (sz)) &gt;&gt; 9) &lt;= 20) ?  91 + (((unsigned long) (sz)) &gt;&gt; 9) :\
+   ((((unsigned long) (sz)) &gt;&gt; 12) &lt;= 10) ? 110 + (((unsigned long) (sz)) &gt;&gt; 12) :\
+   ((((unsigned long) (sz)) &gt;&gt; 15) &lt;= 4) ? 119 + (((unsigned long) (sz)) &gt;&gt; 15) :\
+   ((((unsigned long) (sz)) &gt;&gt; 18) &lt;= 2) ? 124 + (((unsigned long) (sz)) &gt;&gt; 18) :\
+   126)
+</code></pre>
 <p>上面是通过大小寻找large bin下标所定义的宏，它将一个可用chunk的大小（以字节为单位）映射到large bin数组中的一个索引，以便在这个large bin中查找可用的chunk。</p>
 <ol>
 <li><p>如果 sz 右移 6 个比特（即除以 64）得到的结果小于等于 48，则 largebin 索引值为 48 加上这个结果。</p>
